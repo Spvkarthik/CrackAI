@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Card from "../components/Card.jsx";
 import Spinner from "../components/Spinner.jsx";
+import SeverityChart from "../components/SeverityChart.jsx";
 import { getHistory, getMe } from "../services/api.js";
 
 function formatDate(iso) {
@@ -73,6 +74,13 @@ export default function Dashboard() {
               </div>
             </Card>
           </div>
+
+          <Card
+            title="Severity progress"
+            subtitle="Trend of Low / Medium / High across your uploads"
+          >
+            <SeverityChart items={history} />
+          </Card>
 
           <Card title="Recent activity" subtitle="Your latest uploads and outcomes">
             {recent.length === 0 ? (

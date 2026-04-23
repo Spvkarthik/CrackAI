@@ -9,10 +9,11 @@ const { nanoid } = require("nanoid");
 
 const { db, initDb } = require("./lib/db");
 const { authMiddleware } = require("./lib/auth");
-const { analyzeMock } = require("./lib/analyzeMock");
+const { analyzeWithLocalMlService } = require("./lib/mlService");
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
+let demoImageSeq = 0;
 
 const app = express();
 
@@ -27,7 +28,8 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname || "").slice(0, 12) || ".jpg";
-    cb(null, `${Date.now()}-${nanoid(8)}${ext}`);
+    demoImageSeq += 1;
+    cb(null, `image${demoImageSeq}${ext}`);
   },
 });
 
@@ -94,10 +96,10 @@ app.post("/api/analyze", authMiddleware(JWT_SECRET), upload.single("image"), asy
   const structureName = String(req.body?.structureName || "Default Structure").trim();
   const locationTag = String(req.body?.locationTag || "General").trim();
 
-  const fileUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}`;
+  const imageName = req.file.filename || `image${Date.now()}`;
   const createdAt = new Date().toISOString();
 
-  const analysis = analyzeMock();
+  const analysis = await analyzeWithLocalMlService(req.file.path);
   const resultId = nanoid();
 
   const result = {
@@ -105,13 +107,16 @@ app.post("/api/analyze", authMiddleware(JWT_SECRET), upload.single("image"), asy
     userId: req.user.id,
     structureName,
     locationTag,
-    imageUrl: fileUrl,
+    imageUrl: "",
+    imageName,
+    hideImage: true,
     createdAt,
     severity: analysis.severity,
     confidence: analysis.confidence,
     description: analysis.description,
     overlayBoxes: analysis.overlayBoxes,
     metrics: analysis.metrics, // crackAreaPct, damageScore, etc.
+    recommendedActions: analysis.recommendedActions,
   };
 
   db.data.results.push(result);
@@ -124,7 +129,8 @@ app.post("/api/analyze", authMiddleware(JWT_SECRET), upload.single("image"), asy
     createdAt,
     severity: result.severity,
     confidence: result.confidence,
-    thumbnailUrl: result.imageUrl,
+    thumbnailUrl: "",
+    imageName,
     damageScore: result.metrics.damageScore,
     crackAreaPct: result.metrics.crackAreaPct,
   });

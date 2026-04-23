@@ -60,13 +60,24 @@ function normalizeResult(payload, { fallbackId, imageUrl }) {
     payload?.data?.overlayBoxes ||
     null;
 
+  const hideImage = Boolean(payload?.hideImage || payload?.data?.hideImage);
+  const recommendedActions =
+    payload?.recommendedActions ||
+    payload?.data?.recommendedActions ||
+    payload?.actions ||
+    payload?.data?.actions ||
+    null;
+
   return {
     id: String(id),
-    imageUrl: payload?.imageUrl || payload?.data?.imageUrl || imageUrl,
+    imageUrl: hideImage ? "" : payload?.imageUrl || payload?.data?.imageUrl || imageUrl,
+    imageName: payload?.imageName || payload?.data?.imageName || null,
+    hideImage,
     severity,
     confidence: Math.max(0, Math.min(100, Number.isFinite(confidence) ? confidence : 0)),
     description,
     overlayBoxes: Array.isArray(boxes) ? boxes : null,
+    recommendedActions: Array.isArray(recommendedActions) ? recommendedActions : null,
     createdAt: payload?.createdAt || payload?.data?.createdAt || new Date().toISOString(),
   };
 }
