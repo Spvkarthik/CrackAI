@@ -42,7 +42,7 @@ function issueToken(user) {
   return jwt.sign(
     { sub: user.id, email: user.email, name: user.name },
     JWT_SECRET,
-    { expiresIn: "30d" }
+    { expiresIn: "30d" },
   );
 }
 
@@ -50,20 +50,31 @@ app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 app.post("/api/register", async (req, res) => {
   const name = String(req.body?.name || "").trim();
-  const email = String(req.body?.email || "").trim().toLowerCase();
+  const email = String(req.body?.email || "")
+    .trim()
+    .toLowerCase();
   const password = String(req.body?.password || "");
 
   if (!name) return res.status(400).json({ message: "Name is required" });
   if (!email || !/^\S+@\S+\.\S+$/.test(email))
     return res.status(400).json({ message: "Valid email is required" });
   if (!password || password.length < 6)
-    return res.status(400).json({ message: "Password must be at least 6 characters" });
+    return res
+      .status(400)
+      .json({ message: "Password must be at least 6 characters" });
 
   const existing = db.data.users.find((u) => u.email === email);
-  if (existing) return res.status(409).json({ message: "Email already registered" });
+  if (existing)
+    return res.status(409).json({ message: "Email already registered" });
 
   const passwordHash = await bcrypt.hash(password, 10);
-  const user = { id: nanoid(), name, email, passwordHash, createdAt: new Date().toISOString() };
+  const user = {
+    id: nanoid(),
+    name,
+    email,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+  };
   db.data.users.push(user);
   await db.write();
 
@@ -71,9 +82,12 @@ app.post("/api/register", async (req, res) => {
 });
 
 app.post("/api/login", async (req, res) => {
-  const email = String(req.body?.email || "").trim().toLowerCase();
+  const email = String(req.body?.email || "")
+    .trim()
+    .toLowerCase();
   const password = String(req.body?.password || "");
-  if (!email || !password) return res.status(400).json({ message: "Email and password required" });
+  if (!email || !password)
+    return res.status(400).json({ message: "Email and password required" });
 
   const user = db.data.users.find((u) => u.email === email);
   if (!user) return res.status(401).json({ message: "Invalid credentials" });
@@ -82,7 +96,10 @@ app.post("/api/login", async (req, res) => {
   if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
   const token = issueToken(user);
-  return res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+  return res.json({
+    token,
+    user: { id: user.id, name: user.name, email: user.email },
+  });
 });
 
 app.get("/api/me", authMiddleware(JWT_SECRET), (req, res) => {
@@ -90,63 +107,149 @@ app.get("/api/me", authMiddleware(JWT_SECRET), (req, res) => {
 });
 
 // Upload + analyze
-app.post("/api/analyze", authMiddleware(JWT_SECRET), upload.single("image"), async (req, res) => {
-  if (!req.file) return res.status(400).json({ message: "Image file is required (field name: image)" });
+app.post(
+  "/api/analyze",
+  authMiddleware(JWT_SECRET),
+  upload.single("image"),
+  async (req, res) => {
+    if (!req.file)
+      return res
+        .status(400)
+        .json({ message: "Image file is required (field name: image)" });
 
-  const structureName = String(req.body?.structureName || "Default Structure").trim();
-  const locationTag = String(req.body?.locationTag || "General").trim();
+    const structureName = String(
+      req.body?.structureName || "Default Structure",
+    ).trim();
+    const locationTag = String(req.body?.locationTag || "General").trim();
 
-  const imageName = req.file.filename || `image${Date.now()}`;
-  const createdAt = new Date().toISOString();
+    const imageName = req.file.filename || `image${Date.now()}`;
+    const createdAt = new Date().toISOString();
 
-  const analysis = await analyzeWithLocalMlService(req.file.path);
-  const resultId = nanoid();
+    const analysis = await analyzeWithLocalMlService(req.file.path);
+    // Debug logging to help trace annotated image flow
+    // eslint-disable-next-line no-console
+    console.log(
+      "[analyze] analysis received - annotatedB64:",
+      Boolean(analysis?.annotatedB64),
+      "annotatedName:",
+      analysis?.annotatedName,
+    );
+    try {
+      const exists = fs.existsSync(req.file.path);
+      const stat = exists ? fs.statSync(req.file.path) : null;
+      // eslint-disable-next-line no-console
+      console.log(
+        "[analyze] uploaded file:",
+        req.file.path,
+        "exists:",
+        exists,
+        "size:",
+        stat ? stat.size : null,
+      );
+      if (analysis?.annotatedB64) {
+        const prefix = String(analysis.annotatedB64).slice(0, 32);
+        // eslint-disable-next-line no-console
+        console.log("[analyze] annotatedB64 prefix:", prefix);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[analyze] debug log failed:", e?.message || e);
+    }
+    const resultId = nanoid();
+    // Default to the raw uploaded image URL
+    let chosenImageName = imageName;
+    let chosenIsAnnotated = false;
 
-  const result = {
-    id: resultId,
-    userId: req.user.id,
-    structureName,
-    locationTag,
-    imageUrl: "",
-    imageName,
-    hideImage: true,
-    createdAt,
-    severity: analysis.severity,
-    confidence: analysis.confidence,
-    description: analysis.description,
-    overlayBoxes: analysis.overlayBoxes,
-    metrics: analysis.metrics, // crackAreaPct, damageScore, etc.
-    recommendedActions: analysis.recommendedActions,
-  };
+    // If the ML service returned an annotated image (base64), save it and prefer it
+    if (analysis?.annotatedB64) {
+      try {
+        const buf = Buffer.from(analysis.annotatedB64, "base64");
+        const annotatedName =
+          analysis.annotatedName || `annotated-${imageName}`;
+        const annotatedPath = path.join(uploadsDir, annotatedName);
+        fs.writeFileSync(annotatedPath, buf);
+        chosenImageName = annotatedName;
+        chosenIsAnnotated = true;
+        // eslint-disable-next-line no-console
+        console.log(`[analyze] wrote annotated image to ${annotatedPath}`);
+        try {
+          const ok = fs.existsSync(annotatedPath);
+          const s = ok ? fs.statSync(annotatedPath) : null;
+          // eslint-disable-next-line no-console
+          console.log(
+            "[analyze] annotated file verify exists:",
+            ok,
+            "size:",
+            s ? s.size : null,
+          );
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error("[analyze] verify failed:", e?.message || e);
+        }
+      } catch (e) {
+        // ignore failure and fall back to original image
+        // eslint-disable-next-line no-console
+        console.error(
+          "[analyze] Failed to write annotated image:",
+          e?.message || e,
+        );
+      }
+    }
 
-  db.data.results.push(result);
+    const imageUrl = `${req.protocol}://${req.get("host")}/uploads/${chosenImageName}`;
 
-  db.data.history.unshift({
-    id: resultId,
-    userId: req.user.id,
-    structureName,
-    locationTag,
-    createdAt,
-    severity: result.severity,
-    confidence: result.confidence,
-    thumbnailUrl: "",
-    imageName,
-    damageScore: result.metrics.damageScore,
-    crackAreaPct: result.metrics.crackAreaPct,
-  });
+    const result = {
+      id: resultId,
+      userId: req.user.id,
+      structureName,
+      locationTag,
+      imageUrl,
+      imageName: chosenImageName,
+      hideImage: false,
+      createdAt,
+      severity: analysis.severity,
+      confidence: analysis.confidence,
+      description: analysis.description,
+      overlayBoxes: analysis.overlayBoxes,
+      metrics: analysis.metrics, // crackAreaPct, damageScore, etc.
+      recommendedActions: analysis.recommendedActions,
+      _meta: { annotated: chosenIsAnnotated },
+    };
 
-  db.data.history = db.data.history.slice(0, 500);
-  await db.write();
+    db.data.results.push(result);
 
-  return res.json(result);
-});
+    db.data.history.unshift({
+      id: resultId,
+      userId: req.user.id,
+      structureName,
+      locationTag,
+      createdAt,
+      severity: result.severity,
+      confidence: result.confidence,
+      thumbnailUrl: imageUrl,
+      imageName: chosenImageName,
+      damageScore: result.metrics.damageScore,
+      crackAreaPct: result.metrics.crackAreaPct,
+    });
+
+    db.data.history = db.data.history.slice(0, 500);
+    await db.write();
+
+    return res.json(result);
+  },
+);
 
 app.get("/api/history", authMiddleware(JWT_SECRET), (req, res) => {
-  const structureName = req.query?.structureName ? String(req.query.structureName) : "";
-  const locationTag = req.query?.locationTag ? String(req.query.locationTag) : "";
+  const structureName = req.query?.structureName
+    ? String(req.query.structureName)
+    : "";
+  const locationTag = req.query?.locationTag
+    ? String(req.query.locationTag)
+    : "";
 
   let items = db.data.history.filter((h) => h.userId === req.user.id);
-  if (structureName) items = items.filter((h) => h.structureName === structureName);
+  if (structureName)
+    items = items.filter((h) => h.structureName === structureName);
   if (locationTag) items = items.filter((h) => h.locationTag === locationTag);
 
   return res.json({ items });
@@ -154,19 +257,26 @@ app.get("/api/history", authMiddleware(JWT_SECRET), (req, res) => {
 
 app.get("/api/results/:id", authMiddleware(JWT_SECRET), (req, res) => {
   const id = String(req.params.id);
-  const result = db.data.results.find((r) => r.id === id && r.userId === req.user.id);
+  const result = db.data.results.find(
+    (r) => r.id === id && r.userId === req.user.id,
+  );
   if (!result) return res.status(404).json({ message: "Result not found" });
   return res.json(result);
 });
 
 // Trend for a structure/location (damageScore over time)
 app.get("/api/trend", authMiddleware(JWT_SECRET), (req, res) => {
-  const structureName = req.query?.structureName ? String(req.query.structureName) : "";
-  const locationTag = req.query?.locationTag ? String(req.query.locationTag) : "";
+  const structureName = req.query?.structureName
+    ? String(req.query.structureName)
+    : "";
+  const locationTag = req.query?.locationTag
+    ? String(req.query.locationTag)
+    : "";
   const metric = req.query?.metric ? String(req.query.metric) : "damageScore";
 
   let rows = db.data.history.filter((h) => h.userId === req.user.id);
-  if (structureName) rows = rows.filter((h) => h.structureName === structureName);
+  if (structureName)
+    rows = rows.filter((h) => h.structureName === structureName);
   if (locationTag) rows = rows.filter((h) => h.locationTag === locationTag);
 
   const points = rows
@@ -183,11 +293,16 @@ app.get("/api/trend", authMiddleware(JWT_SECRET), (req, res) => {
 
 // Alerts based on recent slope/spikes
 app.get("/api/alerts", authMiddleware(JWT_SECRET), (req, res) => {
-  const structureName = req.query?.structureName ? String(req.query.structureName) : "";
-  const locationTag = req.query?.locationTag ? String(req.query.locationTag) : "";
+  const structureName = req.query?.structureName
+    ? String(req.query.structureName)
+    : "";
+  const locationTag = req.query?.locationTag
+    ? String(req.query.locationTag)
+    : "";
 
   let rows = db.data.history.filter((h) => h.userId === req.user.id);
-  if (structureName) rows = rows.filter((h) => h.structureName === structureName);
+  if (structureName)
+    rows = rows.filter((h) => h.structureName === structureName);
   if (locationTag) rows = rows.filter((h) => h.locationTag === locationTag);
 
   const last = rows.slice(0, 14).slice().reverse(); // oldest -> newest
@@ -239,4 +354,3 @@ initDb()
     console.error("Failed to start backend:", err);
     process.exit(1);
   });
-

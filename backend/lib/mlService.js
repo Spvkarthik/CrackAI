@@ -26,10 +26,11 @@ function recommendedActionsFor(severity) {
 }
 
 async function analyzeWithLocalMlService(imagePath, opts) {
-  const baseUrl = (opts?.baseUrl || process.env.ML_SERVICE_URL || "http://localhost:5050").replace(
-    /\/$/,
-    ""
-  );
+  const baseUrl = (
+    opts?.baseUrl ||
+    process.env.ML_SERVICE_URL ||
+    "http://localhost:5050"
+  ).replace(/\/$/, "");
 
   // Node 18+ has fetch/FormData/Blob globally (via undici).
   const fd = new FormData();
@@ -49,6 +50,10 @@ async function analyzeWithLocalMlService(imagePath, opts) {
   const severity = String(data?.severity || "Medium");
   const ratio = Number(data?.crack_ratio ?? 0);
   const count = Number(data?.crack_count ?? 0);
+
+  // Pass through annotated image (base64) if ML service returned one
+  const annotatedB64 = data?.annotated_image || null;
+  const annotatedName = data?.annotated_image_name || null;
 
   const confidence = Math.max(0, Math.min(100, Math.round(40 + ratio * 1000)));
   const description =
@@ -72,8 +77,9 @@ async function analyzeWithLocalMlService(imagePath, opts) {
       crackCount: Number.isFinite(count) ? count : 0,
     },
     provider: { name: "local_ml_service", url: baseUrl },
+    annotatedB64,
+    annotatedName,
   };
 }
 
 module.exports = { analyzeWithLocalMlService };
-
