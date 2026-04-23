@@ -70,15 +70,25 @@ function normalizeResult(payload, { fallbackId, imageUrl }) {
 
   return {
     id: String(id),
-    imageUrl: hideImage ? "" : payload?.imageUrl || payload?.data?.imageUrl || imageUrl,
+    imageUrl: hideImage
+      ? ""
+      : payload?.imageUrl || payload?.data?.imageUrl || imageUrl,
     imageName: payload?.imageName || payload?.data?.imageName || null,
     hideImage,
     severity,
-    confidence: Math.max(0, Math.min(100, Number.isFinite(confidence) ? confidence : 0)),
+    confidence: Math.max(
+      0,
+      Math.min(100, Number.isFinite(confidence) ? confidence : 0),
+    ),
     description,
     overlayBoxes: Array.isArray(boxes) ? boxes : null,
-    recommendedActions: Array.isArray(recommendedActions) ? recommendedActions : null,
-    createdAt: payload?.createdAt || payload?.data?.createdAt || new Date().toISOString(),
+    recommendedActions: Array.isArray(recommendedActions)
+      ? recommendedActions
+      : null,
+    createdAt:
+      payload?.createdAt ||
+      payload?.data?.createdAt ||
+      new Date().toISOString(),
   };
 }
 
@@ -96,20 +106,23 @@ function mockBoxes() {
 export async function login({ email, password }) {
   try {
     const res = await client.post("/login", { email, password });
-    const token = res.data?.token || res.data?.access_token || res.data?.data?.token;
-    const user =
-      res.data?.user ||
+    const token =
+      res.data?.token || res.data?.access_token || res.data?.data?.token;
+    const user = res.data?.user ||
       res.data?.data?.user || { name: res.data?.name, email: res.data?.email };
 
     if (!token) throw new Error("Login succeeded but no token returned.");
     setAuth({ token, user });
     return { token, user };
   } catch (err) {
-    // fallback demo login (keeps UI usable when backend auth isn't implemented yet)
-    const demoToken = "demo-token";
-    const user = { name: "Demo User", email };
-    setAuth({ token: demoToken, user });
-    return { token: demoToken, user, warning: asErrorMessage(err) };
+    // Surface the error to the caller so the UI shows a clear message and
+    // we don't store an invalid/demo token that will cause 401s on protected
+    // endpoints (which previously led to silent fallbacks to mocked results).
+    // Preserve original error message for UI display.
+    const message = asErrorMessage(err);
+    const out = new Error(message);
+    out.original = err;
+    throw out;
   }
 }
 
@@ -118,8 +131,13 @@ export async function register({ name, email, password }) {
     const res = await client.post("/register", { name, email, password });
     return res.data;
   } catch (err) {
-    // fallback: treat as success for UI-only flow
-    return { ok: true, warning: asErrorMessage(err) };
+    // Surface registration errors so the UI can show the failure instead of
+    // pretending the account was created. This avoids confusing states where
+    // users think they registered but cannot log in.
+    const message = asErrorMessage(err);
+    const out = new Error(message);
+    out.original = err;
+    throw out;
   }
 }
 
@@ -157,7 +175,7 @@ export async function uploadImage(file) {
           "Backend unavailable; showing a mocked overlay. Wire your backend response fields to replace this.",
         overlayBoxes: mockBoxes(),
       },
-      { fallbackId, imageUrl }
+      { fallbackId, imageUrl },
     );
 
     localUpsertResult(result);
@@ -176,7 +194,8 @@ export async function uploadImage(file) {
 export async function getHistory() {
   try {
     const res = await client.get("/history");
-    const items = res.data?.items || res.data?.history || res.data?.data || res.data;
+    const items =
+      res.data?.items || res.data?.history || res.data?.data || res.data;
     if (Array.isArray(items)) return items;
     return localGetHistory();
   } catch {
@@ -191,7 +210,9 @@ export async function getResult(id) {
       fallbackId: String(id),
       imageUrl: localGetResult(String(id))?.imageUrl || "",
     });
-    if (!result.overlayBoxes) result.overlayBoxes = localGetResult(String(id))?.overlayBoxes || mockBoxes();
+    if (!result.overlayBoxes)
+      result.overlayBoxes =
+        localGetResult(String(id))?.overlayBoxes || mockBoxes();
     localUpsertResult(result);
     return result;
   } catch {
@@ -206,7 +227,7 @@ export async function getResult(id) {
           "No backend result found. This is a placeholder result so the page renders.",
         overlayBoxes: mockBoxes(),
       },
-      { fallbackId: String(id), imageUrl: "" }
+      { fallbackId: String(id), imageUrl: "" },
     );
   }
 }
@@ -214,4 +235,3 @@ export async function getResult(id) {
 export function getMe() {
   return getUser();
 }
-
